@@ -2,6 +2,22 @@
 
 _A Python repository for decomposing causality into its synergistic, unique, and redundant components for complex and chaotic systems._
 
+## FORK NOTES:
+
+This fork adds package structure to install with pip:
+
+`pip install git+https://github.com/djpasseyjr/SURD.git`
+
+```python
+import numpy as np
+import surd
+
+agent = np.random.rand(4, 1000)
+target = agent[0, :] * agent[1, :] + agent[2, :]
+Y = np.vstack([target, agent])
+I_R, I_S, MI = surd.surd_hd(Y, nbins=20, max_combs=3)
+```
+
 ## Introduction
 SURD (Synergistic-Unique-Redundant Decomposition) is a causal inference method that measures the increments of information gained about future events based on the
 available information from past observations. It further decomposes the causal interactions into redundant, unique, and synergistic contributions according to their nature. The formulation is non-intrusive and requires only pairs of past and future events, facilitating its application in both computational and experimental
