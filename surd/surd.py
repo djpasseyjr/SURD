@@ -239,6 +239,94 @@ def surd_hd(Y: np.ndarray, nbins, max_combs) -> Tuple[Dict, Dict, Dict]:
     return I_R, I_S, MI
 
 
+def surd_parallel(
+    target_signals: np.ndarray,
+    agent_signals: np.ndarray,
+    nlag: int = 0,
+    nbins: int = 15,
+    max_combs: int = 2,
+    cores: int = 4,
+):
+    """Runs SURD on a set of target signals and agent signals in parallel.
+
+    Args:
+        target_signals (np.ndarray): Array of target signals. Rows are
+            observations, columns are variables.
+        agent_signals (np.ndarray): Array of agent signals. Rows are
+            observations, columns are variables.
+        nlag (int, optional): Number of lags to use. Defaults to 1.
+        nbins (int, optional): Number of histogram bins to use. Defaults to 15.
+        max_combs (int, optional): Maximum number of combinations for
+            synergistic information. Defaults to 2.
+        cores (int, optional): Number of cores to use. Defaults to 4.
+
+    Returns:
+        Rd_results (dict): Dictionary of redundant and unique contributions.
+            In the form:
+                {1: {(2, 5): 0.1, (3, 4): 0.2, ...},
+                2: {(1,): 0.1, (5, 6, 7): 0.0, ...},
+                    ...}
+            The first set of keys are the target variables, and the second set of keys are the combinations of agent variables. Rd_results[i] is a dictionary of the form {(2, 5): 0.1, (3, 4): 0.2, ...} where the keys are the combinations of agent variables and the values are the corresponding redundant contributions.
+        Sy_results (dict): Dictionary of synergistic contributions.
+            In the form:
+                {1: {(2, 5): 0.1, (3, 4): 0.2, ...},
+                2: {(1,): 0.1, (5, 6, 7): 0.0, ...},
+                    ...}
+            The first set of keys are the target variables, and the second set 
+            of keys are the combinations of agent variables. Sy_results[i] is a 
+            dictionary of the form {(2, 5): 0.1, (3, 4): 0.2, ...} where the 
+            keys are the combinations of agent variables and the values are the 
+            corresponding synergistic contributions.    
+        MI_results (dict): Dictionary of mutual information results.
+            In the form:
+                {1: {(2, 5): 0.1, (3, 4): 0.2, ...},
+                2: {(1,): 0.1, (5, 6, 7): 0.0, ...},
+                    ...}
+            The first set of keys are the target variables, and the second set
+            of keys are the combinations of agent variables. MI_results[i] is a
+            dictionary of the form {(2, 5): 0.1, (3, 4): 0.2, ...} where the 
+            keys are the combinations of agent variables and the values are the
+            corresponding mutual information of those groups of variables.
+        info_leak_results (dict): Dictionary of information leak results.
+            Keys are variable indices and values are the corresponding information leak values. Information leak is the fraction of total entropy that is not accounted for by the redundant and synergistic contributions.
+
+    NOTE: All dictionaries use 1-based indexing for keys and variables
+    """
+    Rd_results = pymp.shared.dict({})  # Dictionary for redundant contribution
+    Sy_results = pymp.shared.dict({})  # Dictionary for synergistic contribution
+    MI_results = pymp.shared.dict({})   # Dictionary for mutual info results
+    info_leak_results = pymp.shared.dict({})  # Dictionary for info leak results
+
+    target_X = target_signals.T
+    agent_X = agent_signals.T
+
+    if nlag != 0:
+        target_X = target_X[:, nlag:]
+        agent_X = agent_X[:, :-nlag]
+
+
+    num_target_vars = target_X.shape[0]
+
+    with pymp.Parallel(cores) as par:
+        for i in par.range(num_target_vars):
+            Y = np.vstack([target_X[i, :], agent_X])  # Organize data
+
+            # Run SURD
+            Rd, Sy, MI = surd.surd_hd(Y, nbins, max_combs)
+
+            # Calculate information leak
+            hist = surd.it_tools.myhistogram(Y[0,:].T, nbins)
+            H  = surd.it_tools.entropy_nvars(hist, (0,) )
+            info_leak = 1 - (sum(Rd.values()) + sum(Sy.values())) / H
+
+            Rd_results[i+1] = Rd
+            Sy_results[i+1] = Sy
+            MI_results[i+1] = MI
+            info_leak_results[i+1] = info_leak
+
+    return Rd_results, Sy_results, MI_results, info_leak_results
+
+
 def plot(I_R, I_S, info_leak, axs, nvars, threshold=0):
     """
     This function computes and plots information flux for given data.
@@ -318,7 +406,8 @@ def plot(I_R, I_S, info_leak, axs, nvars, threshold=0):
     return dict(zip(label_keys, values))
 
 
-def plot_nlabels(I_R, I_S, info_leak, axs, nvars, nlabels=-1):
+def plot_nlabels(
+    I_R, I_S, info_leak, axs, nvars, nlabels=-1, varnames=None):
     """
     This function computes and plots information flux for given data.
     :param I_R: Data for redundant contribution
@@ -326,8 +415,8 @@ def plot_nlabels(I_R, I_S, info_leak, axs, nvars, nlabels=-1):
     :param axs: Axes for plotting
     :param colors: Colors for redundant, unique and synergistic contributions
     :param nvars: Number of variables
-    :param threshold: Threshold as a percentage of the maximum value to select contributions to plot
-    """
+    :param nlabels: Number of labels to display
+    :param varnames: Names of the variables"""
     colors = {}
     colors['redundant'] = mcolors.to_rgb('#003049')
     colors['unique'] = mcolors.to_rgb('#d62828')
@@ -344,8 +433,15 @@ def plot_nlabels(I_R, I_S, info_leak, axs, nvars, nlabels=-1):
     for r in range(nvars, 0, -1):
         for comb in icmb(range(1, nvars + 1), r):
             prefix = 'U' if len(comb) == 1 else 'R'
-            I_R_keys.append(prefix + ''.join(map(str, comb)))
-            I_R_labels.append(f"$\\mathrm{{{prefix}}}{{{''.join(map(str, comb))}}}$")
+            
+            # Add variable names if provided
+            named_comb = [c for c in comb]
+            if varnames is not None:
+                named_comb = [varnames[c-1] for c in comb]
+
+            I_R_keys.append(prefix + ' '.join(map(str, named_comb)))
+            I_R_labels.append(
+                f"$\\mathrm{{{prefix}}}{{{' '.join(map(str, named_comb))}}}$")
     
     # Synergestic Contributions
     I_S_keys = ['S' + ''.join(map(str, comb)) for r in range(2, nvars+1) for comb in icmb(range(1, nvars + 1), r)]
