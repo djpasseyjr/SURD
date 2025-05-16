@@ -312,11 +312,11 @@ def surd_parallel(
             Y = np.vstack([target_X[i, :], agent_X])  # Organize data
 
             # Run SURD
-            Rd, Sy, MI = surd.surd_hd(Y, nbins, max_combs)
+            Rd, Sy, MI = surd_hd(Y, nbins, max_combs)
 
             # Calculate information leak
-            hist = surd.it_tools.myhistogram(Y[0,:].T, nbins)
-            H  = surd.it_tools.entropy_nvars(hist, (0,) )
+            hist = it.myhistogram(Y[0,:].T, nbins)
+            H  = it.entropy_nvars(hist, (0,) )
             info_leak = 1 - (sum(Rd.values()) + sum(Sy.values())) / H
 
             Rd_results[i+1] = Rd
